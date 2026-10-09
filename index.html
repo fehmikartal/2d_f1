@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>F1 2D Racing - Circuit de Spa-Francorchamps</title>
+  <meta name="description" content="Experience realistic 2D Formula 1 racing on the iconic Circuit de Spa-Francorchamps with bird's-eye camera, authentic physics, DRS, ERS, and synthesized V6 hybrid engine sounds.">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏎️</text></svg>">
+</head>
+<body>
+  <!-- High Performance Canvas Render Viewport -->
+  <div id="canvas-container">
+    <canvas id="game-canvas"></canvas>
+  </div>
+
+  <!-- F1 Broadcast UI Overlay -->
+  <div id="ui-overlay">
+    <!-- Top Bar Navigation & Timing -->
+    <div id="top-bar">
+      <!-- Live Timing Tower (Top Left) -->
+      <div id="timing-card" class="f1-card interactive" title="Click to view Lap Times Table (Key: T)">
+        <div class="timing-header">
+          <div id="lap-counter-badge" class="lap-count-badge">OUT LAP / TIME TRIAL</div>
+          <div id="track-flag-badge" class="flag-badge">🇧🇪 SPA</div>
+        </div>
+        <div id="current-lap-time" class="lap-timer-main">--:--.---</div>
+        <div class="sector-row">
+          <div id="sector-1-time" class="sector-chip">S1: --.---</div>
+          <div id="sector-2-time" class="sector-chip">S2: --.---</div>
+          <div id="sector-3-time" class="sector-chip">S3: --.---</div>
+        </div>
+        <div class="last-lap-row">
+          <span>LAST LAP</span>
+          <span id="last-lap-time">--:--.---</span>
+        </div>
+        <div class="best-lap-row">
+          <span>BEST BENCHMARK</span>
+          <span id="best-lap-time">--:--.---</span>
+        </div>
+      </div>
+
+      <!-- Controls & Team Options (Top Right) -->
+      <div id="controls-card" class="f1-card interactive">
+        <div class="track-badge">
+          <div class="track-select-box">
+            <select id="track-select" class="select-dropdown track-dropdown" title="Select Circuit">
+              <option value="spa" selected>Spa-Francorchamps</option>
+              <option value="istanbul">Istanbul Park</option>
+            </select>
+            <p id="track-subtitle">7.004 KM • 20 TURNS</p>
+          </div>
+        </div>
+
+        <select id="team-select" class="select-dropdown" title="Select F1 Team">
+          <option value="redbull">Red Bull Racing</option>
+          <option value="ferrari">Scuderia Ferrari</option>
+          <option value="mercedes">Mercedes-AMG</option>
+          <option value="mclaren">McLaren F1 Team</option>
+          <option value="aston">Aston Martin Aramco</option>
+        </select>
+
+        <button id="laptimes-btn" class="action-btn" title="View Lap Times Table (Key: T)">
+          ⏱️ LAP TIMES
+        </button>
+
+        <button id="cam-mode-btn" class="action-btn" title="Toggle Camera Mode (Key: C)">
+          🎥 CHASE CAM
+        </button>
+
+        <div id="volume-widget" class="volume-widget" title="Adjust Volume (0-100%)">
+          <button id="sound-toggle-btn" class="volume-btn" title="Mute / Unmute (Key: M)">🔊</button>
+          <input type="range" id="volume-slider" min="0" max="100" value="70" class="volume-slider" title="Adjust Sound Volume">
+          <span id="volume-pct">70%</span>
+        </div>
+
+        <button id="reset-btn" class="action-btn" title="Reset Car to Grid (Key: R)">
+          🔄 RESET
+        </button>
+      </div>
+    </div>
+
+    <!-- Center Alerts & Start Gantry -->
+    <div id="center-notifications">
+      <!-- 5 Red Lights Start Sequence -->
+      <div id="start-lights-container" class="hidden">
+        <div class="start-light-pair">
+          <div class="light-bulb"></div>
+          <div class="light-bulb"></div>
+        </div>
+        <div class="start-light-pair">
+          <div class="light-bulb"></div>
+          <div class="light-bulb"></div>
+        </div>
+        <div class="start-light-pair">
+          <div class="light-bulb"></div>
+          <div class="light-bulb"></div>
+        </div>
+        <div class="start-light-pair">
+          <div class="light-bulb"></div>
+          <div class="light-bulb"></div>
+        </div>
+        <div class="start-light-pair">
+          <div class="light-bulb"></div>
+          <div class="light-bulb"></div>
+        </div>
+      </div>
+
+
+      <!-- Track Limits Warning Banner -->
+      <div id="track-limits-warning" class="hidden">
+        ⚠️ TRACK LIMITS EXCEEDED - LAP MARKED OFF-TRACK
+      </div>
+    </div>
+
+    <!-- Bottom Telemetry Cockpit Dashboard -->
+    <div id="bottom-bar">
+      <div id="telemetry-dashboard" class="f1-card">
+        <!-- Rev Limiter LED Strip -->
+        <div id="led-rev-counter">
+          <!-- 5 Green LEDs -->
+          <div class="led-light green"></div>
+          <div class="led-light green"></div>
+          <div class="led-light green"></div>
+          <div class="led-light green"></div>
+          <div class="led-light green"></div>
+          <!-- 5 Red LEDs -->
+          <div class="led-light red"></div>
+          <div class="led-light red"></div>
+          <div class="led-light red"></div>
+          <div class="led-light red"></div>
+          <div class="led-light red"></div>
+          <!-- 5 Blue Shift-Point LEDs -->
+          <div class="led-light blue"></div>
+          <div class="led-light blue"></div>
+          <div class="led-light blue"></div>
+          <div class="led-light blue"></div>
+          <div class="led-light blue"></div>
+        </div>
+
+        <!-- Metrics Row -->
+        <div class="dashboard-metrics-row">
+          <!-- Speedometer -->
+          <div class="metric-box">
+            <span id="telemetry-speed" class="metric-value-huge">0</span>
+            <span class="metric-unit">KM / H</span>
+          </div>
+
+          <!-- Digital Gear Indicator -->
+          <div class="gear-display">
+            <span id="telemetry-gear" class="gear-digit">1</span>
+            <span class="gear-label">GEAR</span>
+          </div>
+
+          <!-- DRS Status Badge -->
+          <div class="metric-box">
+            <div id="drs-indicator" class="drs-status disabled interactive" title="Click or Press F to Toggle DRS">DRS DISABLED</div>
+            <span class="metric-unit">PRESS [F]</span>
+          </div>
+        </div>
+
+        <!-- ERS Hybrid Battery Bar -->
+        <div class="ers-container">
+          <span class="ers-label">ERS BATTERY</span>
+          <div class="ers-bar-track">
+            <div id="ers-bar-fill"></div>
+          </div>
+          <span id="ers-percentage">100%</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Mobile Touch Controls (shown on small screens) -->
+    <div id="touch-controls">
+      <div class="touch-cluster">
+        <button id="touch-left" class="touch-btn">◀</button>
+        <button id="touch-right" class="touch-btn">▶</button>
+      </div>
+      <div class="touch-cluster">
+        <button id="touch-ers" class="touch-btn" style="background:#0284c7">⚡</button>
+        <button id="touch-brake" class="touch-btn" style="background:#dc2626">▼</button>
+        <button id="touch-throttle" class="touch-btn" style="background:#16a34a">▲</button>
+      </div>
+    </div>
+
+    <!-- Desktop Keymap Helper -->
+    <div id="keymap-help">
+      <span><span class="key-badge">▲ / W</span> THROTTLE</span>
+      <span><span class="key-badge">▼ / S</span> BRAKE</span>
+      <span><span class="key-badge">◀ ▶ / A D</span> STEER</span>
+      <span><span class="key-badge">F / SHIFT</span> DRS WING</span>
+      <span><span class="key-badge">SPACE / E</span> ERS BOOST</span>
+      <span><span class="key-badge">T</span> LAP TIMES</span>
+      <span><span class="key-badge">C</span> CAMERA</span>
+      <span><span class="key-badge">R</span> RESET</span>
+      <span><span class="key-badge">M</span> AUDIO</span>
+    </div>
+
+    </div>
+  </div>
+
+  <!-- Lap Times Table & Leaderboard Modal (Top-Level Overlay) -->
+  <div id="laptimes-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title-box">
+          <div class="modal-title-row">
+            <span id="modal-title" class="modal-title">⏱️ SESSION LAP TIMES</span>
+            <div class="modal-tab-group">
+              <button id="tab-top10-btn" class="modal-tab active" type="button" title="View All-Time Top 10 Fastest Laps">🏆 TOP 10 ALL-TIME</button>
+              <button id="tab-session-btn" class="modal-tab" type="button" title="View Current Session Laps">⏱️ CURRENT SESSION</button>
+            </div>
+          </div>
+          <div id="modal-session-subtitle" class="modal-subtitle">Circuit de Spa-Francorchamps • Hotlap Session</div>
+        </div>
+        <button id="close-modal-btn" class="modal-close-btn" type="button" title="Close (ESC)">✕</button>
+      </div>
+
+      <!-- Summary Stat Badges -->
+      <div class="modal-summary-row">
+        <div class="stat-pill">
+          <span id="modal-stat-label-1" class="stat-label">RECORD BEST</span>
+          <span id="modal-stat-best" class="stat-value purple">--:--.---</span>
+        </div>
+        <div class="stat-pill">
+          <span id="modal-stat-label-2" class="stat-label">TOTAL RECORDS</span>
+          <span id="modal-stat-total" class="stat-value">0</span>
+        </div>
+        <div class="stat-pill">
+          <span id="modal-stat-label-3" class="stat-label">OPTIMAL LAP</span>
+          <span id="modal-stat-optimal" class="stat-value purple">--:--.---</span>
+        </div>
+        <div class="stat-pill">
+          <span id="modal-stat-label-4" class="stat-label">TOP SPEED</span>
+          <span id="modal-stat-speed" class="stat-value green">-- KM/H</span>
+        </div>
+      </div>
+
+      <!-- Table Scroll Area -->
+      <div class="table-container">
+        <table class="laptimes-table">
+          <thead id="laptimes-thead">
+            <tr>
+              <th style="width: 55px;">POS</th>
+              <th>CAR / DRIVER</th>
+              <th>LAP TIME</th>
+              <th>SECTOR 1</th>
+              <th>SECTOR 2</th>
+              <th>SECTOR 3</th>
+              <th>TOP SPEED</th>
+              <th>DELTA</th>
+              <th>DATE</th>
+            </tr>
+          </thead>
+          <tbody id="laptimes-tbody">
+            <!-- Populated dynamically via JS -->
+          </tbody>
+        </table>
+        <div id="laptimes-empty-state" class="empty-state">
+          <div class="empty-icon">🏎️</div>
+          <div id="modal-empty-title" class="empty-title">No all-time lap records yet</div>
+          <div id="modal-empty-sub" class="empty-sub">Complete clean laps around the circuit to enter the Top 10 All-Time Leaderboard!</div>
+        </div>
+      </div>
+
+      <!-- Modal Footer -->
+      <div class="modal-footer">
+        <span class="footer-tip">Tip: Press <kbd class="key-badge">T</kbd> to toggle, <kbd class="key-badge">ESC</kbd> to close • Purple indicates all-time fastest splits</span>
+        <button id="clear-laps-btn" class="modal-btn danger" type="button" title="Clear lap records">🗑️ CLEAR TOP 10</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Protocol Checker (Warns if opened directly via file://) -->
+  <script>
+    if (window.location.protocol === 'file:') {
+      window.addEventListener('DOMContentLoaded', function() {
+        const warning = document.createElement('div');
+        warning.style.cssText = 'position:fixed;inset:0;background:rgba(10,12,16,0.97);z-index:999999;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;font-family:sans-serif;text-align:center;padding:24px;';
+        warning.innerHTML = '<h2 style="color:#ef4444;font-size:24px;margin-bottom:12px;">⚠️ Cannot Run via file:// Protocol</h2>' +
+          '<p style="max-width:560px;font-size:15px;line-height:1.6;color:#cbd5e1;margin-bottom:24px;">' +
+          'Modern web browsers block JavaScript modules from loading directly from the file system due to security (CORS) restrictions.<br><br>' +
+          '<strong>To play the game, please run <code style="color:#38bdf8;background:#1e293b;padding:2px 8px;border-radius:4px;">play.bat</code></strong> or use a local HTTP server.' +
+          '</p>' +
+          '<div style="background:#1e293b;border:1px solid #334155;padding:12px 24px;border-radius:8px;font-family:monospace;font-size:16px;color:#38bdf8;font-weight:bold;">play.bat</div>';
+        document.body.appendChild(warning);
+      });
+    }
+  </script>
+
+  <!-- Game Bootstrap Script -->
+  <script type="module" src="src/game.js?v=12"></script>
+</body>
+</html>
