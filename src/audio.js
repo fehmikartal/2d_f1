@@ -234,6 +234,15 @@ export class AudioManager {
 
     const now = this.ctx.currentTime;
 
+    if (!rpm || rpm <= 0) {
+      if (this.engineGain) this.engineGain.gain.setTargetAtTime(0.0, now, 0.04);
+      if (this.turboGain) this.turboGain.gain.setTargetAtTime(0.0, now, 0.04);
+      if (this.squealGain) this.squealGain.gain.setTargetAtTime(0.0, now, 0.03);
+      if (this.kerbGain) this.kerbGain.gain.setTargetAtTime(0.0, now, 0.03);
+      if (this.windGain) this.windGain.gain.setTargetAtTime(0.0, now, 0.04);
+      return;
+    }
+
     // Fundamental firing frequency: F1 V6 runs at (RPM / 60) * 3 Hz (combustions per rev)
     const baseFreq = (rpm / 60) * 3;
 

@@ -18,37 +18,62 @@
   <div id="ui-overlay">
     <!-- Top Bar Navigation & Timing -->
     <div id="top-bar">
-      <!-- Live Timing Tower (Top Left) -->
-      <div id="timing-card" class="f1-card interactive" title="Click to view Lap Times Table (Key: T)">
-        <div class="timing-header">
-          <div id="lap-counter-badge" class="lap-count-badge">OUT LAP / TIME TRIAL</div>
-          <div id="track-flag-badge" class="flag-badge">🇧🇪 SPA</div>
+      <!-- Left Navigation Cluster (Telemetry + Live Standings Tower) -->
+      <div id="top-left-cluster">
+        <!-- Live Timing Card (Top Left) -->
+        <div id="timing-card" class="f1-card interactive" title="Click to view Lap Times Table (Key: T)">
+          <div class="timing-header">
+            <div id="lap-counter-badge" class="lap-count-badge">OUT LAP / TIME TRIAL</div>
+            <div id="track-flag-badge" class="flag-badge">🇧🇪 SPA</div>
+          </div>
+          <div id="current-lap-time" class="lap-timer-main">--:--.---</div>
+          <div class="sector-row">
+            <div id="sector-1-time" class="sector-chip">S1: --.---</div>
+            <div id="sector-2-time" class="sector-chip">S2: --.---</div>
+            <div id="sector-3-time" class="sector-chip">S3: --.---</div>
+          </div>
+          <div class="last-lap-row">
+            <span>LAST LAP</span>
+            <span id="last-lap-time">--:--.---</span>
+          </div>
+          <div class="best-lap-row">
+            <span>BEST BENCHMARK</span>
+            <span id="best-lap-time">--:--.---</span>
+          </div>
         </div>
-        <div id="current-lap-time" class="lap-timer-main">--:--.---</div>
-        <div class="sector-row">
-          <div id="sector-1-time" class="sector-chip">S1: --.---</div>
-          <div id="sector-2-time" class="sector-chip">S2: --.---</div>
-          <div id="sector-3-time" class="sector-chip">S3: --.---</div>
-        </div>
-        <div class="last-lap-row">
-          <span>LAST LAP</span>
-          <span id="last-lap-time">--:--.---</span>
-        </div>
-        <div class="best-lap-row">
-          <span>BEST BENCHMARK</span>
-          <span id="best-lap-time">--:--.---</span>
+
+        <!-- F1 Broadcast Live Timing Tower -->
+        <div id="live-timing-tower" class="f1-card timing-tower hidden">
+          <div class="tower-header">
+            <span class="tower-title">🏆 ROOM STANDINGS</span>
+            <span class="live-pulse" title="Live Sync"></span>
+          </div>
+          <div id="tower-rows" class="tower-rows">
+            <!-- Populated via JS -->
+          </div>
         </div>
       </div>
 
       <!-- Controls & Team Options (Top Right) -->
       <div id="controls-card" class="f1-card interactive">
+        <button id="lobby-btn" class="action-btn" type="button" title="Multiplayer Rooms">
+          🌐 ROOMS
+        </button>
+
+        <!-- Room info badge in top right bar -->
+        <div id="room-status-badge" class="top-room-badge hidden" title="Current Multiplayer Room (Click for Rooms)">
+          <span class="room-pulse-dot"></span>
+          <span class="room-title">ROOM <strong id="hud-room-code">----</strong></span>
+          <span class="room-divider">•</span>
+          <span class="room-sub" id="hud-room-players">👥 1 Driver</span>
+        </div>
+
         <div class="track-badge">
           <div class="track-select-box">
             <select id="track-select" class="select-dropdown track-dropdown" title="Select Circuit">
               <option value="spa" selected>Spa-Francorchamps</option>
               <option value="istanbul">Istanbul Park</option>
             </select>
-            <p id="track-subtitle">7.004 KM • 20 TURNS</p>
           </div>
         </div>
 
@@ -209,6 +234,7 @@
             <div class="modal-tab-group">
               <button id="tab-top10-btn" class="modal-tab active" type="button" title="View All-Time Top 10 Fastest Laps">🏆 TOP 10 ALL-TIME</button>
               <button id="tab-session-btn" class="modal-tab" type="button" title="View Current Session Laps">⏱️ CURRENT SESSION</button>
+              <button id="tab-room-btn" class="modal-tab" type="button" title="View Live Room Leaderboard">🏁 ROOM STANDINGS</button>
             </div>
           </div>
           <div id="modal-session-subtitle" class="modal-subtitle">Circuit de Spa-Francorchamps • Hotlap Session</div>
@@ -266,10 +292,89 @@
       <!-- Modal Footer -->
       <div class="modal-footer">
         <span class="footer-tip">Tip: Press <kbd class="key-badge">T</kbd> to toggle, <kbd class="key-badge">ESC</kbd> to close • Purple indicates all-time fastest splits</span>
-        <button id="clear-laps-btn" class="modal-btn danger" type="button" title="Clear lap records">🗑️ CLEAR TOP 10</button>
+        <button id="clear-laps-btn" class="modal-btn danger hidden" type="button" title="Clear current session lap history">🗑️ CLEAR SESSION</button>
       </div>
     </div>
   </div>
+
+  <!-- Online Multiplayer Lobby Modal (Initial Entry Screen) -->
+  <div id="multiplayer-modal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="mp-modal-title">
+    <div class="modal-card mp-card">
+      <div class="modal-header">
+        <div class="modal-title-box">
+          <div class="modal-title-row">
+            <span id="mp-modal-title" class="modal-title">🏎️ FORMULA 1 ONLINE</span>
+            <span class="live-pill">🔴 LIVE MULTIPLAYER</span>
+          </div>
+          <div class="modal-subtitle">Real-Time Hotlap Sessions • Drop-in & Race with Friends</div>
+        </div>
+        <div class="modal-actions-box">
+          <button id="mp-leave-btn" class="modal-btn danger hidden" type="button" title="Leave Current Room">🚪 LEAVE ROOM</button>
+          <button id="close-mp-modal-btn" class="modal-close-btn hidden" type="button" title="Close">✕</button>
+        </div>
+      </div>
+
+      <div class="mp-content">
+        <!-- Driver Profile Section -->
+        <div class="mp-section">
+          <label class="mp-label" for="mp-username">DRIVER NAME</label>
+          <div class="mp-input-row">
+            <input type="text" id="mp-username" class="mp-input" placeholder="Enter your driver name (e.g. Max, Lewis)" maxlength="16" autofocus>
+            <select id="mp-team-select" class="select-dropdown mp-team-select" title="Select Livery">
+              <option value="redbull">Red Bull Racing</option>
+              <option value="ferrari">Scuderia Ferrari</option>
+              <option value="mercedes">Mercedes-AMG</option>
+              <option value="mclaren">McLaren F1 Team</option>
+              <option value="aston">Aston Martin Aramco</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="mp-error-msg" class="mp-error-banner hidden" role="alert"></div>
+
+        <!-- Room Action Cards -->
+        <div class="mp-action-grid">
+          <!-- Card A: Create Room -->
+          <div class="mp-action-card">
+            <div class="mp-card-tag">NEW SESSION</div>
+            <h3>Create a Room</h3>
+            <p class="mp-card-desc">Start a new room and choose the circuit for all drivers.</p>
+            
+            <label class="mp-label" for="mp-create-track">SELECT CIRCUIT</label>
+            <select id="mp-create-track" class="select-dropdown mp-track-select">
+              <option value="spa" selected>Circuit de Spa-Francorchamps (7.004 km)</option>
+              <option value="istanbul">Intercity Istanbul Park (5.338 km)</option>
+            </select>
+
+            <button id="mp-create-btn" class="mp-btn primary" type="button">
+              🏁 Create & Race
+            </button>
+          </div>
+
+          <!-- Card B: Join Room -->
+          <div class="mp-action-card">
+            <div class="mp-card-tag">JOIN FRIENDS</div>
+            <h3>Join Existing Room</h3>
+            <p class="mp-card-desc">Enter a room code or open a direct invite link.</p>
+
+            <label class="mp-label" for="mp-join-code">ROOM CODE</label>
+            <input type="text" id="mp-join-code" class="mp-input mp-code-input" placeholder="e.g. SPA1" maxlength="8">
+
+            <button id="mp-join-btn" class="mp-btn secondary" type="button">
+              🚀 Join Session
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer mp-footer">
+        <span class="footer-tip">💡 Ghost Cars: Drive through other cars with 0 collisions while chasing fastest lap times.</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Real-Time Toast Notification -->
+  <div id="f1-toast" class="f1-toast"></div>
 
   <!-- Protocol Checker (Warns if opened directly via file://) -->
   <script>
@@ -289,6 +394,6 @@
   </script>
 
   <!-- Game Bootstrap Script -->
-  <script type="module" src="src/game.js?v=12"></script>
+  <script type="module" src="src/game.js?v=28"></script>
 </body>
 </html>

@@ -8,41 +8,41 @@
 // ========================================================
 
 export const SPA_CORNERS = [
-  { name: "La Source", number: 1, type: "Hairpin Right", t: 0.045 },
-  { name: "Eau Rouge", number: 2, type: "Left Flick Downhill", t: 0.125 },
-  { name: "Raidillon", number: 4, type: "Uphill Right-Left", t: 0.155 },
-  { name: "Kemmel Straight", number: null, type: "DRS Zone 1", t: 0.22 },
-  { name: "Les Combes", number: 5, type: "Right Chicane Entry", t: 0.32 },
-  { name: "Malmedy", number: 7, type: "Right Turn", t: 0.355 },
-  { name: "Rivage / Bruxelles", number: 8, type: "180° Downhill Hairpin", t: 0.42 },
-  { name: "Speaker's Corner", number: 9, type: "Sweeping Left", t: 0.47 },
-  { name: "Pouhon (Double Gauche)", number: 10, type: "Fast Double Apex Left", t: 0.54 },
-  { name: "Fagnes / Pif-Paf", number: 12, type: "Right-Left Chicane", t: 0.65 },
-  { name: "Campus", number: 14, type: "Right Flick", t: 0.71 },
-  { name: "Stavelot", number: 15, type: "Banked Right Exit", t: 0.75 },
-  { name: "Courbe Paul Frère", number: 16, type: "High-Speed Right", t: 0.80 },
-  { name: "Blanchimont", number: 17, type: "Flat-out Left", t: 0.88 },
-  { name: "Bus Stop Chicane", number: 19, type: "Slow Right-Left Chicane", t: 0.95 },
+  { name: "La Source", number: 1, type: "Hairpin Right", t: 0.064 },
+  { name: "Eau Rouge", number: 2, type: "Left Flick Downhill", t: 0.195 },
+  { name: "Raidillon", number: 4, type: "Uphill Right-Left", t: 0.220 },
+  { name: "Kemmel Straight", number: null, type: "DRS Zone 1", t: 0.320 },
+  { name: "Les Combes", number: 5, type: "Right Chicane Entry", t: 0.413 },
+  { name: "Malmedy", number: 7, type: "Right Turn", t: 0.431 },
+  { name: "Rivage / Bruxelles", number: 8, type: "180° Downhill Hairpin", t: 0.489 },
+  { name: "Speaker's Corner", number: 9, type: "Sweeping Left", t: 0.541 },
+  { name: "Pouhon (Double Gauche)", number: 10, type: "Fast Double Apex Left", t: 0.598 },
+  { name: "Fagnes / Pif-Paf", number: 12, type: "Right-Left Chicane", t: 0.704 },
+  { name: "Campus", number: 14, type: "Right Flick", t: 0.732 },
+  { name: "Stavelot", number: 15, type: "Banked Right Exit", t: 0.747 },
+  { name: "Courbe Paul Frère", number: 16, type: "High-Speed Right", t: 0.778 },
+  { name: "Blanchimont", number: 17, type: "Flat-out Left", t: 0.812 },
+  { name: "Bus Stop Chicane", number: 19, type: "Slow Right-Left Chicane", t: 0.949 },
 ];
 
 export const SPA_DRS_ZONES = [
   {
     name: "Kemmel Straight DRS",
-    detectionT: 0.165,
-    activationStartT: 0.19,
-    activationEndT: 0.31,
+    detectionT: 0.175,
+    activationStartT: 0.255,
+    activationEndT: 0.390,
   },
   {
     name: "Main Straight DRS",
-    detectionT: 0.92,
+    detectionT: 0.920,
     activationStartT: 0.975,
-    activationEndT: 0.035,
+    activationEndT: 0.040,
   }
 ];
 
 export const SPA_SECTORS = {
-  s1End: 0.30,
-  s2End: 0.78,
+  s1End: 0.44, // Exit of Turn 7 (Malmedy) - one corner after Les Combes / Kemmel DRS
+  s2End: 0.78, // Courbe Paul Frère exit
   s3End: 1.00
 };
 
@@ -170,14 +170,14 @@ export const ISTANBUL_DRS_ZONES = [
   {
     name: "Pit Straight DRS",
     detectionT: 0.985,
-    activationStartT: 0.02,
-    activationEndT: 0.16
+    activationStartT: 0.025,
+    activationEndT: 0.145
   },
   {
     name: "Back Straight DRS",
-    detectionT: 0.70,
-    activationStartT: 0.73,
-    activationEndT: 0.94
+    detectionT: 0.685,
+    activationStartT: 0.730,
+    activationEndT: 0.920
   }
 ];
 
@@ -406,6 +406,32 @@ export class BaseTrack {
     return a + (b - a) * t;
   }
 
+  getPointAtT(t) {
+    const pts = this.sampledPoints;
+    const n = pts.length;
+    if (n === 0) return null;
+    const normT = ((t % 1) + 1) % 1;
+    let low = 0;
+    let high = n - 1;
+    let bestIdx = 0;
+    let minDiff = Infinity;
+    while (low <= high) {
+      const mid = (low + high) >> 1;
+      const ptT = pts[mid].tGlobal;
+      const diff = Math.abs(ptT - normT);
+      if (diff < minDiff) {
+        minDiff = diff;
+        bestIdx = mid;
+      }
+      if (ptT < normT) {
+        low = mid + 1;
+      } else {
+        high = mid - 1;
+      }
+    }
+    return pts[bestIdx];
+  }
+
   initDecorations(seed = 42) {
     let s = seed;
     const pseudoRand = () => {
@@ -413,28 +439,47 @@ export class BaseTrack {
       return s / 233280;
     };
 
+    const greenPalettes = [
+      { shade: "#123819", highlight: "#1e5927" },
+      { shade: "#174420", highlight: "#246832" },
+      { shade: "#0e2d14", highlight: "#194f24" },
+      { shade: "#1c4a25", highlight: "#2c723a" },
+      { shade: "#143a1e", highlight: "#225e30" }
+    ];
+
+    this.pineTrees = [];
     const b = this.bounds;
     for (let i = 0; i < 1400; i++) {
       const rx = b.minX - 300 + pseudoRand() * (b.maxX - b.minX + 600);
       const ry = b.minY - 300 + pseudoRand() * (b.maxY - b.minY + 600);
+      const radius = 20 + pseudoRand() * 25;
 
-      let tooClose = false;
-      for (let j = 0; j < this.sampledPoints.length; j += 15) {
-        const pt = this.sampledPoints[j];
-        if (Math.hypot(rx - pt.x, ry - pt.y) < pt.width * 0.5 + 130) {
-          tooClose = true;
+      const cp = this.getClosestPoint(rx, ry);
+      const distToCenter = Math.sqrt(cp.distSq);
+      const minClearance = cp.point.width * 0.5 + 130 + radius;
+      if (distToCenter < minClearance) {
+        continue;
+      }
+
+      let onStand = false;
+      for (const gs of (this.grandstands || [])) {
+        const gsSize = Math.max(gs.length || 0, gs.width || 0);
+        if (Math.hypot(rx - gs.x, ry - gs.y) < gsSize * 0.5 + radius + 40) {
+          onStand = true;
           break;
         }
       }
+      if (onStand) continue;
 
-      if (!tooClose) {
-        this.pineTrees.push({
-          x: rx,
-          y: ry,
-          radius: 20 + pseudoRand() * 25,
-          color: pseudoRand() > 0.5 ? "#1b3322" : "#14291b"
-        });
-      }
+      const palette = greenPalettes[Math.floor(pseudoRand() * greenPalettes.length)];
+      this.pineTrees.push({
+        x: rx,
+        y: ry,
+        radius,
+        shade: palette.shade,
+        highlight: palette.highlight,
+        color: palette.shade
+      });
     }
   }
 
@@ -603,6 +648,7 @@ export class SpaTrack extends BaseTrack {
     });
 
     this.setupSpaDecorations();
+    this.initDecorations(42);
   }
 
   setupSpaDecorations() {
@@ -661,6 +707,7 @@ export class IstanbulParkTrack extends BaseTrack {
     });
 
     this.setupIstanbulDecorations();
+    this.initDecorations(88);
   }
 
   setupIstanbulDecorations() {

@@ -20,17 +20,17 @@ okay i'm not gonna bore you with some ai read me text. it's a game with highly d
 | **ERS Overtake Boost** | `Space` | `E` | On-screen `⚡` |
 | **Camera Mode** | `C` | - | `🎥 CHASE CAM` button |
 | **Reset Car to Grid** | `R` | - | `🔄 RESET` button |
-| **Lap Times Table** | `T` | `Esc` (Close) | `⏱️ LAP TIMES` button / Timing Card |
+| **Lap Times Table** | `T` | - | `⏱️ LAP TIMES` button / Timing Card |
 | **Audio Volume / Mute** | `M` | - | Volume Slider (0-100%) / Speaker icon |
 
 ---
 
 ## 🏎️ F1 Teams & Liveries
-- 🔴 **Scuderia Ferrari** (#16 Charles Leclerc)
-- 🔵 **Red Bull Racing** (#1 Max Verstappen)
-- 🔘 **Mercedes-AMG** (#44 Lewis Hamilton)
-- 🟠 **McLaren F1** (#4 Lando Norris)
-- 🟢 **Aston Martin Aramco** (#14 Fernando Alonso)
+- 🔴 **Scuderia Ferrari** 
+- 🔵 **Red Bull Racing** 
+- 🔘 **Mercedes-AMG** 
+- 🟠 **McLaren F1** 
+- 🟢 **Aston Martin Aramco** 
 
 ---
 

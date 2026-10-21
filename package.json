@@ -1,0 +1,26 @@
+{
+  "name": "2d_f1",
+  "version": "1.0.0",
+  "description": "A top-down, bird's-eye browser 2D Formula 1 racing game with authentic vehicle physics, iconic circuit layouts, telemetry dashboard, Web Audio API sound synthesis, DRS, and ERS hybrid boost.",
+  "type": "module",
+  "scripts": {
+    "party:dev": "partykit dev",
+    "party:deploy": "partykit deploy",
+    "pages:deploy": "wrangler pages deploy . --project-name=f1-2d-racing"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fehmikartal/2d_f1.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/fehmikartal/2d_f1/issues"
+  },
+  "homepage": "https://github.com/fehmikartal/2d_f1#readme",
+  "dependencies": {
+    "partykit": "^0.0.115",
+    "partysocket": "^1.3.0"
+  }
+}

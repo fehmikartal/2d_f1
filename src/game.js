@@ -4,11 +4,14 @@
  * keyboard controls (Arrow Keys + WASD), and camera state.
  */
 
-import { SpaTrack, IstanbulParkTrack, TRACK_CLASSES } from "./track.js";
-import { F1Physics } from "./physics.js";
-import { F1Car, F1_TEAMS } from "./car.js";
-import { AudioManager } from "./audio.js";
-import { TrackRenderer } from "./renderer.js";
+import { SpaTrack, IstanbulParkTrack, TRACK_CLASSES } from "./track.js?v=28";
+import { F1Physics } from "./physics.js?v=28";
+import { F1Car, F1_TEAMS } from "./car.js?v=28";
+import { AudioManager } from "./audio.js?v=28";
+import { TrackRenderer } from "./renderer.js?v=28";
+import { RoomUI } from "./room_ui.js?v=28";
+import { NetworkManager } from "./network.js?v=28";
+import { RemotePlayer } from "./remote_player.js?v=28";
 
 export class F1Game {
   constructor() {
@@ -61,8 +64,9 @@ export class F1Game {
     this.currentLap = 0;
     
     // Load all-time best lap time for current track as initial benchmark
-    const initialTopLaps = this.getTop10Laps(this.currentTrackId);
-    this.bestLapTime = initialTopLaps.length > 0 ? initialTopLaps[0].time : null;
+    this.allTimeLaps = this.getTop10Laps(this.currentTrackId);
+    this.isCloudDbSynced = false;
+    this.bestLapTime = this.allTimeLaps.length > 0 ? this.allTimeLaps[0].time : null;
     this.playerCar.bestLapTime = this.bestLapTime;
 
     this.currentSector = 1;
@@ -132,16 +136,21 @@ export class F1Game {
       volumePct: document.getElementById("volume-pct"),
       trackSelect: document.getElementById("track-select"),
       teamSelect: document.getElementById("team-select"),
-      trackSubtitle: document.getElementById("track-subtitle"),
       trackFlagBadge: document.getElementById("track-flag-badge"),
-      trackLimitsAlert: document.getElementById("track-limits-warning")
+      trackLimitsAlert: document.getElementById("track-limits-warning"),
+      timingTower: document.getElementById("live-timing-tower"),
+      towerRows: document.getElementById("tower-rows"),
+      tabRoomBtn: document.getElementById("tab-room-btn")
     };
+
+    this.roomLeaderboard = [];
 
     this.lastTimestamp = performance.now();
     this.activeCornerDismissTimer = 0;
 
     this.initEvents();
     this.initHUD();
+    this.initRoomUI();
     this.resizeCanvas();
     this.resetCar();
 
@@ -149,13 +158,202 @@ export class F1Game {
     requestAnimationFrame((t) => this.loop(t));
   }
 
+  initRoomUI() {
+    this.remotePlayers = new Map();
+    this.network = new NetworkManager();
+
+    this.network.onRoomSync = (data) => {
+      if (data.track && data.track !== this.currentTrackId) {
+        this.switchTrack(data.track);
+      }
+
+      this.remotePlayers.clear();
+      if (Array.isArray(data.players)) {
+        data.players.forEach((p) => {
+          if (p.id !== this.network.selfId) {
+            const rp = new RemotePlayer(p.id, p.name, p.team, this.track);
+            if (p.x || p.y) rp.applyNetworkUpdate(p);
+            this.remotePlayers.set(p.id, rp);
+          }
+        });
+      }
+
+      this.roomLeaderboard = data.leaderboard || [];
+      if (data.allTimeRecords && Array.isArray(data.allTimeRecords)) {
+        this.allTimeLaps = data.allTimeRecords;
+        this.isCloudDbSynced = true;
+        this.saveTop10Laps(this.currentTrackId, this.allTimeLaps);
+      }
+      if (data.trackRecord) {
+        this.bestLapTime = data.trackRecord;
+        this.playerCar.bestLapTime = this.bestLapTime;
+        if (this.ui.bestLapTime) {
+          this.ui.bestLapTime.innerText = this.formatLapTime(this.bestLapTime);
+        }
+      }
+      if (this.roomUI) {
+        if (!this.roomUI.isInRoom) {
+          this.roomUI.enterRoom(this.network.roomCode, data.track, this.remotePlayers.size + 1);
+        } else {
+          this.roomUI.updatePlayerCount(this.remotePlayers.size + 1);
+        }
+      }
+      this.updateLiveTimingTower();
+    };
+
+    this.network.onPlayerJoined = (player) => {
+      if (player.id !== this.network.selfId) {
+        const rp = new RemotePlayer(player.id, player.name, player.team, this.track);
+        this.remotePlayers.set(player.id, rp);
+      }
+      if (this.roomUI) {
+        this.roomUI.showToast(`🏎️ ${player.name} joined the room`);
+        this.roomUI.updatePlayerCount(this.remotePlayers.size + 1);
+      }
+      this.updateLiveTimingTower();
+    };
+
+    this.network.onPlayerUpdate = (data) => {
+      if (data.id && data.id !== this.network.selfId) {
+        let rp = this.remotePlayers.get(data.id);
+        if (!rp) {
+          rp = new RemotePlayer(data.id, "Driver", "redbull", this.track);
+          this.remotePlayers.set(data.id, rp);
+        }
+        rp.applyNetworkUpdate(data);
+      }
+    };
+
+    this.network.onPlayerLeft = (playerId) => {
+      this.remotePlayers.delete(playerId);
+      if (this.roomUI) {
+        this.roomUI.updatePlayerCount(this.remotePlayers.size + 1);
+      }
+      this.updateLiveTimingTower();
+    };
+
+    this.network.onLeaderboardUpdate = (leaderboard) => {
+      const oldLeader = this.roomLeaderboard.length > 0 ? this.roomLeaderboard[0] : null;
+      this.roomLeaderboard = leaderboard || [];
+      const newLeader = this.roomLeaderboard.length > 0 ? this.roomLeaderboard[0] : null;
+
+      if (newLeader && (!oldLeader || newLeader.id !== oldLeader.id || newLeader.lapTime < oldLeader.lapTime)) {
+        const timeStr = this.formatLapTime(newLeader.lapTime / 1000);
+        if (this.roomUI) {
+          this.roomUI.showToast(`🟣 NEW ROOM BENCHMARK: ${timeStr} by ${newLeader.name}`);
+        }
+      }
+
+      this.updateLiveTimingTower();
+      if (this.isModalOpen && this.modalTab === "room") {
+        this.renderRoomLeaderboardModal();
+      }
+    };
+
+    this.network.onTrackRecordBeaten = (data) => {
+      console.log(`[F1Game] All-time track record broken! ${data.driver}: ${data.formatted}`);
+      if (this.roomUI) {
+        this.roomUI.showToast(`🔥 NEW ALL-TIME TRACK RECORD! ${data.driver} (${data.formatted})`);
+      }
+      this.bestLapTime = data.allTimeBest || (data.lapTime / 1000);
+      this.playerCar.bestLapTime = this.bestLapTime;
+      if (this.ui.bestLapTime) {
+        this.ui.bestLapTime.innerText = this.formatLapTime(this.bestLapTime);
+      }
+      this.loadDatabaseTrackRecords(this.currentTrackId);
+    };
+
+    this.network.onRoomClosed = (reason) => {
+      this.remotePlayers.clear();
+      this.roomLeaderboard = [];
+      this.updateLiveTimingTower();
+      if (this.roomUI) {
+        this.roomUI.showToast(`Room closed: ${reason}`);
+        this.roomUI.leaveRoom();
+      }
+    };
+
+    this.network.onStatusChange = ({ connected, roomCode, reason }) => {
+      if (!connected) {
+        this.remotePlayers.clear();
+        this.roomLeaderboard = [];
+        this.updateLiveTimingTower();
+        if (reason && this.roomUI && this.roomUI.isInRoom) {
+          this.roomUI.showToast(`Disconnected: ${reason}`);
+        }
+      } else {
+        this.updateLiveTimingTower();
+      }
+    };
+
+    this.network.onRoomError = (err) => {
+      console.warn(`[F1Game] Room error received:`, err);
+      if (this.roomUI) {
+        this.roomUI.handleRoomError(err.message || `Room "${this.network.roomCode}" does not exist.`);
+      }
+    };
+
+    this.roomUI = new RoomUI();
+    this.roomUI.onJoin = ({ roomCode, username, team, track, isHost, action }) => {
+      this.handleRoomJoin({ roomCode, username, team, track, isHost, action });
+    };
+    this.roomUI.onLeave = () => {
+      this.handleRoomLeave();
+    };
+
+    // Load persistent all-time fastest records for the current track from database
+    this.loadDatabaseTrackRecords(this.currentTrackId);
+  }
+
+  handleRoomJoin({ roomCode, username, team, track, isHost, action }) {
+    this.audio.ensureContext();
+    if (team) this.setTeam(team);
+    if (isHost && track && this.tracks[track]) {
+      this.switchTrack(track);
+      this.resetCar();
+    }
+    this.network.connect(roomCode, {
+      name: username,
+      team: team || this.selectedTeam,
+      track: track || this.currentTrackId,
+      action: action || (isHost ? "create" : "join")
+    });
+    console.log(`[F1Game] Connecting to room ${roomCode} as ${username} (Action: ${action || (isHost ? "create" : "join")})`);
+  }
+
+  handleRoomLeave() {
+    this.remotePlayers.clear();
+    this.network.disconnect();
+    this.resetCar();
+    this.keys.up = false;
+    this.keys.down = false;
+    this.keys.left = false;
+    this.keys.right = false;
+    this.keys.ers = false;
+    console.log("[F1Game] Disconnected from room session");
+  }
+
+  isGamePlayable() {
+    if (!this.roomUI) return false;
+    // Must be joined into an active multiplayer room
+    if (!this.roomUI.isInRoom) return false;
+    // Lobby modal must not be open
+    if (this.roomUI.modal && !this.roomUI.modal.classList.contains("hidden")) return false;
+    return true;
+  }
+
   getTop10Laps(trackId = this.currentTrackId) {
+    if (trackId === this.currentTrackId && this.allTimeLaps && this.allTimeLaps.length > 0) {
+      const realRecords = this.allTimeLaps.filter(r => !r.id || !r.id.startsWith("seed_"));
+      return realRecords.slice(0, 10);
+    }
     try {
       const raw = localStorage.getItem(`f1_top10_laps_${trackId}`);
       if (!raw) return [];
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
-        return parsed.sort((a, b) => a.time - b.time).slice(0, 10);
+        const realRecords = parsed.filter(r => !r.id || !r.id.startsWith("seed_"));
+        return realRecords.sort((a, b) => a.time - b.time).slice(0, 10);
       }
       return [];
     } catch (e) {
@@ -166,19 +364,46 @@ export class F1Game {
 
   saveTop10Laps(trackId, laps) {
     try {
-      localStorage.setItem(`f1_top10_laps_${trackId}`, JSON.stringify(laps.slice(0, 10)));
+      const cleaned = (laps || []).filter(r => !r.id || !r.id.startsWith("seed_"));
+      localStorage.setItem(`f1_top10_laps_${trackId}`, JSON.stringify(cleaned.slice(0, 20)));
     } catch (e) {
       console.warn("Failed to save top 10 laps:", e);
     }
   }
 
+  async loadDatabaseTrackRecords(trackId = this.currentTrackId) {
+    if (!this.network) return;
+    try {
+      const data = await this.network.fetchTrackRecords(trackId);
+      if (data && data.success && Array.isArray(data.records)) {
+        const realRecords = data.records.filter(r => !r.id || !r.id.startsWith("seed_"));
+        this.allTimeLaps = realRecords;
+        this.isCloudDbSynced = true;
+        this.saveTop10Laps(trackId, this.allTimeLaps);
+
+        this.bestLapTime = realRecords.length > 0 ? realRecords[0].time : null;
+        this.playerCar.bestLapTime = this.bestLapTime;
+        if (this.ui.bestLapTime) {
+          this.ui.bestLapTime.innerText = this.bestLapTime ? this.formatLapTime(this.bestLapTime) : "--:--.---";
+        }
+
+        if (this.isModalOpen && this.modalTab === "top10") {
+          this.renderTop10Modal();
+        }
+      }
+    } catch (err) {
+      console.warn("[F1Game] Could not load track records from cloud database:", err);
+      this.isCloudDbSynced = false;
+    }
+  }
+
   addTop10Lap(record) {
     if (!record || !record.isValid || !record.time) return;
-    const topLaps = this.getTop10Laps(this.currentTrackId);
 
-    topLaps.push({
+    const driverName = (this.roomUI && this.roomUI.usernameInput && this.roomUI.usernameInput.value.trim()) || record.driver || "Driver";
+    const normalized = {
       time: record.time,
-      lapTime: record.time,
+      lapTime: Math.round(record.time * 1000),
       formatted: record.formatted,
       s1Time: record.s1Time,
       s2Time: record.s2Time,
@@ -187,26 +412,61 @@ export class F1Game {
       s2: record.s2,
       s3: record.s3,
       topSpeed: record.topSpeed,
-      team: record.team,
-      teamName: record.teamName,
-      driver: record.driver,
-      teamColor: record.teamColor,
+      team: record.team || this.selectedTeam,
+      teamName: record.teamName || this.playerCar.team.name,
+      driver: driverName,
+      teamColor: record.teamColor || this.playerCar.team.primaryColor,
       trackId: this.currentTrackId,
       date: record.date || new Date().toLocaleDateString()
-    });
+    };
 
-    // Sort ascending by lap time
-    topLaps.sort((a, b) => a.time - b.time);
-    const trimmed = topLaps.slice(0, 10);
-    this.saveTop10Laps(this.currentTrackId, trimmed);
+    // Update in-memory and local cache
+    const currentList = this.allTimeLaps || this.getTop10Laps(this.currentTrackId);
+    const existingIdx = currentList.findIndex(r => r.driver && r.driver.toLowerCase() === driverName.toLowerCase());
+    if (existingIdx >= 0) {
+      if (normalized.time < currentList[existingIdx].time) {
+        currentList[existingIdx] = normalized;
+      }
+    } else {
+      currentList.push(normalized);
+    }
+    currentList.sort((a, b) => a.time - b.time);
+    this.allTimeLaps = currentList.slice(0, 20);
+    this.saveTop10Laps(this.currentTrackId, this.allTimeLaps);
 
-    // Update session benchmark if improved
-    if (trimmed.length > 0) {
-      this.bestLapTime = trimmed[0].time;
+    if (this.allTimeLaps.length > 0) {
+      this.bestLapTime = this.allTimeLaps[0].time;
       this.playerCar.bestLapTime = this.bestLapTime;
       if (this.ui.bestLapTime) {
         this.ui.bestLapTime.innerText = this.formatLapTime(this.bestLapTime);
       }
+    }
+
+    // Persist to Cloudflare Durable Database via PartyKit
+    if (this.network) {
+      this.network.submitTrackRecord(this.currentTrackId, normalized).then((res) => {
+        if (res && res.success && Array.isArray(res.records)) {
+          this.allTimeLaps = res.records;
+          this.isCloudDbSynced = true;
+          this.saveTop10Laps(this.currentTrackId, this.allTimeLaps);
+
+          if (res.allTimeBest) {
+            this.bestLapTime = res.allTimeBest;
+            this.playerCar.bestLapTime = this.bestLapTime;
+            if (this.ui.bestLapTime) {
+              this.ui.bestLapTime.innerText = this.formatLapTime(this.bestLapTime);
+            }
+          }
+
+          if (this.isModalOpen && this.modalTab === "top10") {
+            this.renderTop10Modal();
+          }
+
+          if (res.isNewRecord && this.roomUI) {
+            this.roomUI.showToast(`🔥 NEW ALL-TIME TRACK RECORD SAVED TO DATABASE!`);
+          }
+        }
+      }).catch((e) => console.warn("Failed to persist lap to database:", e));
     }
   }
 
@@ -221,6 +481,36 @@ export class F1Game {
 
     // Keyboard controls: Arrow Keys + WASD
     window.addEventListener("keydown", (e) => {
+      const targetTag = e.target?.tagName?.toUpperCase();
+      if (targetTag === "INPUT" || targetTag === "TEXTAREA" || targetTag === "SELECT" || e.target?.isContentEditable) {
+        return;
+      }
+
+      if (e.code === "Escape") {
+        this.closeLapTimesModal();
+        return;
+      }
+
+      if (e.code === "KeyT") {
+        this.toggleLapTimesModal();
+        return;
+      }
+
+      if (e.code === "KeyM") {
+        this.toggleSound();
+        return;
+      }
+
+      if (e.code === "KeyC") {
+        this.toggleCamera();
+        return;
+      }
+
+      // Driving and car controls require an active playable room session
+      if (!this.isGamePlayable()) {
+        return;
+      }
+
       this.audio.ensureContext();
 
       switch (e.code) {
@@ -256,25 +546,27 @@ export class F1Game {
           this.toggleDRS();
           e.preventDefault();
           break;
-        case "KeyC":
-          this.toggleCamera();
-          break;
         case "KeyR":
           this.resetCar();
-          break;
-        case "KeyM":
-          this.toggleSound();
-          break;
-        case "KeyT":
-          this.toggleLapTimesModal();
-          break;
-        case "Escape":
-          this.closeLapTimesModal();
           break;
       }
     });
 
     window.addEventListener("keyup", (e) => {
+      const targetTag = e.target?.tagName?.toUpperCase();
+      if (targetTag === "INPUT" || targetTag === "TEXTAREA" || targetTag === "SELECT" || e.target?.isContentEditable) {
+        return;
+      }
+
+      if (!this.isGamePlayable()) {
+        this.keys.up = false;
+        this.keys.down = false;
+        this.keys.left = false;
+        this.keys.right = false;
+        this.keys.ers = false;
+        return;
+      }
+
       switch (e.code) {
         case "ArrowUp":
         case "KeyW":
@@ -304,6 +596,7 @@ export class F1Game {
       const el = document.getElementById(id);
       if (!el) return;
       const start = (e) => {
+        if (!this.isGamePlayable()) return;
         this.audio.ensureContext();
         this.keys[keyName] = true;
         if (e.cancelable) e.preventDefault();
@@ -339,7 +632,10 @@ export class F1Game {
       this.ui.soundToggleBtn.addEventListener("click", () => this.toggleSound());
     }
     if (this.ui.drsBadge) {
-      this.ui.drsBadge.addEventListener("click", () => this.toggleDRS());
+      this.ui.drsBadge.addEventListener("click", () => {
+        if (!this.isGamePlayable()) return;
+        this.toggleDRS();
+      });
     }
 
     if (this.ui.laptimesBtn) {
@@ -363,6 +659,8 @@ export class F1Game {
         this.modalTab = "top10";
         this.ui.tabTop10Btn.classList.add("active");
         if (this.ui.tabSessionBtn) this.ui.tabSessionBtn.classList.remove("active");
+        if (this.ui.tabRoomBtn) this.ui.tabRoomBtn.classList.remove("active");
+        this.loadDatabaseTrackRecords(this.currentTrackId);
         this.updateLapTimesModal();
       });
     }
@@ -371,6 +669,16 @@ export class F1Game {
         this.modalTab = "session";
         this.ui.tabSessionBtn.classList.add("active");
         if (this.ui.tabTop10Btn) this.ui.tabTop10Btn.classList.remove("active");
+        if (this.ui.tabRoomBtn) this.ui.tabRoomBtn.classList.remove("active");
+        this.updateLapTimesModal();
+      });
+    }
+    if (this.ui.tabRoomBtn) {
+      this.ui.tabRoomBtn.addEventListener("click", () => {
+        this.modalTab = "room";
+        this.ui.tabRoomBtn.classList.add("active");
+        if (this.ui.tabTop10Btn) this.ui.tabTop10Btn.classList.remove("active");
+        if (this.ui.tabSessionBtn) this.ui.tabSessionBtn.classList.remove("active");
         this.updateLapTimesModal();
       });
     }
@@ -384,7 +692,10 @@ export class F1Game {
 
     const resetBtn = document.getElementById("reset-btn");
     if (resetBtn) {
-      resetBtn.addEventListener("click", () => this.resetCar());
+      resetBtn.addEventListener("click", () => {
+        if (!this.isGamePlayable()) return;
+        this.resetCar();
+      });
     }
 
     const teamSelect = document.getElementById("team-select");
@@ -412,9 +723,6 @@ export class F1Game {
     if (this.ui.trackSelect && this.ui.trackSelect.value !== trackId) {
       this.ui.trackSelect.value = trackId;
     }
-    if (this.ui.trackSubtitle) {
-      this.ui.trackSubtitle.innerText = `${(this.track.lengthMeters / 1000).toFixed(3)} KM • ${this.track.turnsCount} TURNS`;
-    }
     if (this.ui.trackFlagBadge) {
       this.ui.trackFlagBadge.innerText = `${this.track.flag} ${this.track.flagCode}`;
     }
@@ -435,16 +743,29 @@ export class F1Game {
       this.ui.bestLapTime.innerText = this.bestLapTime ? this.formatLapTime(this.bestLapTime) : "--:--.---";
     }
 
+    // Load persistent database records for newly selected track
+    this.loadDatabaseTrackRecords(this.currentTrackId);
+
     this.resetCar();
+
+    if (this.remotePlayers && this.remotePlayers.size > 0) {
+      const startIndex = this.track.startPointIndex || 0;
+      const pStart = this.track.sampledPoints[startIndex];
+      const angle = Math.atan2(pStart.tangentY, pStart.tangentX);
+      this.remotePlayers.forEach((rp) => {
+        rp.car.resetToGrid(pStart.x, pStart.y, angle);
+        rp.targetX = pStart.x;
+        rp.targetY = pStart.y;
+        rp.targetHeading = angle;
+      });
+    }
+
     this.updateLapTimesModal();
   }
 
   initHUD() {
     if (this.ui.trackSelect) {
       this.ui.trackSelect.value = this.currentTrackId;
-    }
-    if (this.ui.trackSubtitle) {
-      this.ui.trackSubtitle.innerText = `${(this.track.lengthMeters / 1000).toFixed(3)} KM • ${this.track.turnsCount} TURNS`;
     }
     if (this.ui.trackFlagBadge) {
       this.ui.trackFlagBadge.innerText = `${this.track.flag} ${this.track.flagCode}`;
@@ -571,14 +892,50 @@ export class F1Game {
     this.updateTiming(timestamp);
     this.updateHUD();
 
-    // Render Canvas
-    this.renderer.render(this.playerCar);
+    // Update remote players smooth interpolation
+    const remoteList = this.remotePlayers ? Array.from(this.remotePlayers.values()) : [];
+    for (let i = 0; i < remoteList.length; i++) {
+      remoteList[i].updateInterpolation(dt);
+    }
+
+    // Broadcast player car transform to online room (rate-limited ~25Hz)
+    if (this.network && this.network.isConnected) {
+      this.network.sendPlayerUpdate(this.playerCar, timestamp);
+    }
+
+    // Render Canvas with local car and remote ghost cars
+    this.renderer.render(this.playerCar, remoteList);
 
     requestAnimationFrame((t) => this.loop(t));
   }
 
   updatePhysics(dt, timestamp) {
     const car = this.playerCar;
+    if (!this.isGamePlayable()) {
+      this.keys.up = false;
+      this.keys.down = false;
+      this.keys.left = false;
+      this.keys.right = false;
+      this.keys.ers = false;
+      car.vx = 0;
+      car.vy = 0;
+      car.speed = 0;
+      car.speedKmh = 0;
+      car.rpm = 0;
+      car.gear = 1;
+      car.drsActive = false;
+      this.audio.update({
+        rpm: 0,
+        throttle: 0,
+        gear: 1,
+        speedKmh: 0,
+        tireSlip: 0,
+        onKerb: false,
+        drsActive: false
+      });
+      return;
+    }
+
     const canDrive = true;
 
     // Driver Input
@@ -649,6 +1006,7 @@ export class F1Game {
   }
 
   updateTiming(timestamp) {
+    if (!this.isGamePlayable()) return;
     const car = this.playerCar;
     const t = car.lapProgress;
     const dtProgress = t - this.lastProgress;
@@ -714,9 +1072,17 @@ export class F1Game {
           this.lastLapData = record;
           this.playerCar.lastLapTime = lapDuration;
 
-          // If clean lap, add to all-time top 10
+          // If clean lap, add to all-time top 10 and broadcast to online room
           if (isClean) {
             this.addTop10Lap(record);
+            if (this.network && this.network.isConnected) {
+              this.network.sendLapCompleted({
+                lapTime: Math.round(lapDuration * 1000),
+                sector1: s1 ? Math.round(s1 * 1000) : null,
+                sector2: s2 ? Math.round(s2 * 1000) : null,
+                sector3: s3 ? Math.round(s3 * 1000) : null
+              });
+            }
           }
 
           this.updateLapTimesModal();
@@ -733,7 +1099,7 @@ export class F1Game {
 
     // Sector timing when on a timed lap
     if (this.hasCrossedStartLine && this.lapStartTime) {
-      const s1Cut = this.track.sectors?.s1End || 0.30;
+      const s1Cut = this.track.sectors?.s1End || 0.44;
       const s2Cut = this.track.sectors?.s2End || 0.78;
       if (this.currentSector === 1 && t >= s1Cut) {
         this.sectorTimes[0] = (timestamp - this.lapStartTime) / 1000;
@@ -777,17 +1143,12 @@ export class F1Game {
   }
 
   handleClearLaps() {
-    if (this.modalTab === "top10") {
-      if (confirm(`Are you sure you want to clear the all-time Top 10 lap records for ${this.track.name}?`)) {
-        localStorage.removeItem(`f1_top10_laps_${this.currentTrackId}`);
-        this.bestLapTime = null;
-        this.playerCar.bestLapTime = null;
-        if (this.ui.bestLapTime) this.ui.bestLapTime.innerText = "--:--.---";
-        this.updateLapTimesModal();
-      }
-    } else {
+    if (this.modalTab === "session") {
       this.clearSessionLapTimes();
+    } else if (this.modalTab === "room") {
+      this.renderRoomLeaderboardModal();
     }
+    // Users cannot delete all-time top 10 records!
   }
 
   clearSessionLapTimes() {
@@ -801,18 +1162,23 @@ export class F1Game {
   updateLapTimesModal() {
     if (this.modalTab === "top10") {
       this.renderTop10Modal();
-    } else {
+    } else if (this.modalTab === "session") {
       this.renderSessionModal();
+    } else if (this.modalTab === "room") {
+      this.renderRoomLeaderboardModal();
     }
   }
 
   renderTop10Modal() {
-    const topLaps = this.getTop10Laps(this.currentTrackId);
+    const topLaps = (this.allTimeLaps && this.allTimeLaps.length > 0) ? this.allTimeLaps.slice(0, 10) : this.getTop10Laps(this.currentTrackId);
     if (this.ui.modalTitle) {
       this.ui.modalTitle.innerText = "⏱️ ALL-TIME TOP 10 LEADERBOARD";
     }
     if (this.ui.modalSessionSubtitle) {
-      this.ui.modalSessionSubtitle.innerText = `${(this.track.shortName || this.track.name).toUpperCase()} • ALL-TIME TOP 10 FASTEST LAPS • ${this.playerCar.team.name}`;
+      const syncBadge = this.isCloudDbSynced
+        ? `<span class="db-sync-badge">☁️ CLOUD DATABASE PERSISTED</span>`
+        : `<span class="db-sync-badge offline">💾 LOCAL CACHE</span>`;
+      this.ui.modalSessionSubtitle.innerHTML = `${(this.track.shortName || this.track.name).toUpperCase()} • ALL-TIME FASTEST LAPS • ${this.playerCar.team.name} ${syncBadge}`;
     }
 
     // Find best total lap time and best sector times between all of them
@@ -838,9 +1204,9 @@ export class F1Game {
     if (this.ui.modalStatLabel4) this.ui.modalStatLabel4.innerText = "TOP SPEED";
     if (this.ui.modalStatSpeed) this.ui.modalStatSpeed.innerText = maxSpeed > 0 ? `${maxSpeed} KM/H` : "-- KM/H";
 
+    // Hide clear button on leaderboard tab - users cannot delete all-time records
     if (this.ui.clearLapsBtn) {
-      this.ui.clearLapsBtn.innerText = "🗑️ CLEAR TOP 10";
-      this.ui.clearLapsBtn.title = "Clear all-time top 10 records for this track";
+      this.ui.clearLapsBtn.classList.add("hidden");
     }
 
     if (this.ui.modalThead) {
@@ -960,6 +1326,7 @@ export class F1Game {
     if (this.ui.modalStatSpeed) this.ui.modalStatSpeed.innerText = offTrackLaps;
 
     if (this.ui.clearLapsBtn) {
+      this.ui.clearLapsBtn.classList.remove("hidden");
       this.ui.clearLapsBtn.innerText = "🗑️ CLEAR SESSION";
       this.ui.clearLapsBtn.title = "Clear current session lap history";
     }
@@ -1046,6 +1413,183 @@ export class F1Game {
     });
 
     this.ui.laptimesTbody.innerHTML = rowsHtml;
+  }
+
+  renderRoomLeaderboardModal() {
+    if (this.ui.modalTitle) {
+      this.ui.modalTitle.innerText = "🏁 LIVE ROOM LEADERBOARD";
+    }
+    if (this.ui.modalSessionSubtitle) {
+      const code = this.network && this.network.roomCode ? this.network.roomCode : "OFFLINE";
+      this.ui.modalSessionSubtitle.innerText = `${(this.track.shortName || this.track.name).toUpperCase()} • LIVE MULTIPLAYER TIME TRIAL • ROOM ${code}`;
+    }
+
+    const entries = this.roomLeaderboard || [];
+    const bestLapMs = entries.length > 0 ? entries[0].lapTime : null;
+
+    // Stat Pills
+    if (this.ui.modalStatLabel1) this.ui.modalStatLabel1.innerText = "ROOM BENCHMARK";
+    if (this.ui.modalStatBest) this.ui.modalStatBest.innerText = bestLapMs ? this.formatLapTime(bestLapMs / 1000) : "--:--.---";
+    if (this.ui.modalStatLabel2) this.ui.modalStatLabel2.innerText = "TIMED DRIVERS";
+    if (this.ui.modalStatTotal) this.ui.modalStatTotal.innerText = entries.length;
+    if (this.ui.modalStatLabel3) this.ui.modalStatLabel3.innerText = "TOTAL DRIVERS";
+    if (this.ui.modalStatOptimal) this.ui.modalStatOptimal.innerText = (this.remotePlayers ? this.remotePlayers.size + 1 : 1);
+    if (this.ui.modalStatLabel4) this.ui.modalStatLabel4.innerText = "CIRCUIT";
+    if (this.ui.modalStatSpeed) this.ui.modalStatSpeed.innerText = this.track.flagCode || "F1";
+
+    if (this.ui.clearLapsBtn) {
+      this.ui.clearLapsBtn.classList.remove("hidden");
+      this.ui.clearLapsBtn.innerText = "🔄 REFRESH";
+      this.ui.clearLapsBtn.title = "Refresh room standings";
+    }
+
+    if (this.ui.modalThead) {
+      this.ui.modalThead.innerHTML = `
+        <tr>
+          <th style="width: 55px;">POS</th>
+          <th>DRIVER / TEAM</th>
+          <th>BEST LAP</th>
+          <th>SECTOR 1</th>
+          <th>SECTOR 2</th>
+          <th>SECTOR 3</th>
+          <th>DELTA</th>
+          <th>STATUS</th>
+        </tr>
+      `;
+    }
+
+    if (!this.ui.laptimesTbody) return;
+
+    if (entries.length === 0) {
+      this.ui.laptimesTbody.innerHTML = "";
+      if (this.ui.laptimesEmptyState) this.ui.laptimesEmptyState.classList.remove("hidden");
+      if (this.ui.modalEmptyTitle) this.ui.modalEmptyTitle.innerText = "No clean room laps recorded yet";
+      if (this.ui.modalEmptySub) this.ui.modalEmptySub.innerText = "Drive a complete clean lap around the circuit to register on the room leaderboard!";
+      return;
+    }
+
+    if (this.ui.laptimesEmptyState) this.ui.laptimesEmptyState.classList.add("hidden");
+
+    let rowsHtml = "";
+    entries.forEach((e, idx) => {
+      const pos = idx + 1;
+      const isLeader = pos === 1;
+      const isSelf = this.network && e.id === this.network.selfId;
+      const lapSecs = e.lapTime / 1000;
+      const s1 = e.sector1 ? (e.sector1 / 1000).toFixed(3) : "--.---";
+      const s2 = e.sector2 ? (e.sector2 / 1000).toFixed(3) : "--.---";
+      const s3 = e.sector3 ? (e.sector3 / 1000).toFixed(3) : "--.---";
+      const deltaStr = isLeader ? "LEADER" : `+${((e.lapTime - bestLapMs) / 1000).toFixed(3)}s`;
+
+      rowsHtml += `
+        <tr class="${isLeader ? 'row-pb' : ''}">
+          <td style="font-weight: 800; color: ${isLeader ? '#facc15' : '#cbd5e1'};">P${pos}</td>
+          <td style="font-weight: 700;">
+            ${e.name} ${isSelf ? '<span style="color:#38bdf8;">(You)</span>' : ''}
+          </td>
+          <td class="${isLeader ? 'f1-purple-text' : ''}" style="font-weight: 800;">
+            ${this.formatLapTime(lapSecs)}
+          </td>
+          <td>${s1}</td>
+          <td>${s2}</td>
+          <td>${s3}</td>
+          <td class="${isLeader ? 'delta-best' : 'delta-plus'}">${deltaStr}</td>
+          <td>${isLeader ? '<span class="lap-badge badge-pb">🟣 P1 BEST</span>' : '<span class="lap-badge badge-valid">✓ RECORDED</span>'}</td>
+        </tr>
+      `;
+    });
+
+    this.ui.laptimesTbody.innerHTML = rowsHtml;
+  }
+
+  updateLiveTimingTower() {
+    if (!this.ui.timingTower || !this.ui.towerRows) return;
+
+    if (!this.network || !this.network.isConnected) {
+      this.ui.timingTower.classList.add("hidden");
+      return;
+    }
+
+    this.ui.timingTower.classList.remove("hidden");
+
+    const list = [];
+
+    // Local player
+    const localPb = this.playerCar.bestLapTime || null;
+    const localDriverName = (this.roomUI && this.roomUI.usernameInput && this.roomUI.usernameInput.value.trim())
+      ? this.roomUI.usernameInput.value.trim()
+      : (this.playerCar.team.driver || "You");
+
+    list.push({
+      id: this.network.selfId,
+      name: localDriverName,
+      team: this.selectedTeam,
+      teamData: this.playerCar.team,
+      bestLap: localPb ? Math.round(localPb * 1000) : null,
+      isSelf: true
+    });
+
+    // Remote players
+    if (this.remotePlayers) {
+      this.remotePlayers.forEach((rp) => {
+        const record = this.roomLeaderboard.find((e) => e.id === rp.id);
+        list.push({
+          id: rp.id,
+          name: rp.name,
+          team: rp.teamId,
+          teamData: rp.car.team,
+          bestLap: record ? record.lapTime : null,
+          isSelf: false
+        });
+      });
+    }
+
+    // Sort by fastest lap time ascending, then drivers without times
+    list.sort((a, b) => {
+      if (a.bestLap && b.bestLap) return a.bestLap - b.bestLap;
+      if (a.bestLap) return -1;
+      if (b.bestLap) return 1;
+      return a.name.localeCompare(b.name);
+    });
+
+    const leaderTime = list.length > 0 && list[0].bestLap ? list[0].bestLap : null;
+
+    let html = "";
+    list.forEach((item, idx) => {
+      const pos = idx + 1;
+      const isP1 = pos === 1 && item.bestLap !== null;
+      const teamColor = item.teamData ? item.teamData.primaryColor : "#e10600";
+
+      let timeStr = "NO TIME";
+      let timeClass = "tower-time gap";
+
+      if (item.bestLap) {
+        if (isP1) {
+          timeStr = this.formatLapTime(item.bestLap / 1000);
+          timeClass = "tower-time purple";
+        } else if (leaderTime) {
+          const gap = (item.bestLap - leaderTime) / 1000;
+          timeStr = `+${gap.toFixed(3)}s`;
+          timeClass = "tower-time gap";
+        } else {
+          timeStr = this.formatLapTime(item.bestLap / 1000);
+          timeClass = "tower-time";
+        }
+      }
+
+      html += `
+        <div class="tower-row ${item.isSelf ? 'is-self' : ''}">
+          <span class="tower-pos ${isP1 ? 'p1' : ''}">P${pos}</span>
+          <div class="tower-driver">
+            <span class="tower-team-strip" style="background-color: ${teamColor};"></span>
+            <span class="tower-name">${item.name}</span>
+          </div>
+          <span class="${timeClass}">${timeStr}</span>
+        </div>
+      `;
+    });
+
+    this.ui.towerRows.innerHTML = html;
   }
 
   formatLapTime(seconds) {

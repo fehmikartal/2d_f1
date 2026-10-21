@@ -226,13 +226,13 @@ export class TrackRenderer {
 
     // 11. Ardennes Pine Trees & Track Foliage
     for (const tree of (this.track.pineTrees || [])) {
-      tCtx.fillStyle = tree.shade;
+      tCtx.fillStyle = tree.shade || tree.color || "#174420";
       tCtx.beginPath();
       tCtx.arc(tree.x, tree.y, tree.radius, 0, Math.PI * 2);
       tCtx.fill();
 
       // Inner highlight for pine canopy depth
-      tCtx.fillStyle = tree.highlight;
+      tCtx.fillStyle = tree.highlight || "#246832";
       tCtx.beginPath();
       tCtx.arc(tree.x - tree.radius * 0.2, tree.y - tree.radius * 0.2, tree.radius * 0.55, 0, Math.PI * 2);
       tCtx.fill();
@@ -290,56 +290,95 @@ export class TrackRenderer {
   }
 
   drawTrackSignage(tCtx) {
-    const pts = this.track.sampledPoints;
-    const n = pts.length;
-
-    // DRS Activation Lines
+    // DRS Activation & Deactivation Lines
     const drsZones = this.track.drsZones || [];
     drsZones.forEach(zone => {
-      const idx = Math.floor(zone.activationStartT * n) % n;
-      const pt = pts[idx];
-      if (!pt) return;
-      tCtx.strokeStyle = "#10b981"; // Emerald green
-      tCtx.lineWidth = 4;
-      tCtx.beginPath();
-      tCtx.moveTo(pt.leftX, pt.leftY);
-      tCtx.lineTo(pt.rightX, pt.rightY);
-      tCtx.stroke();
+      // DRS Activation Line
+      const pt = this.track.getPointAtT ? this.track.getPointAtT(zone.activationStartT) : null;
+      if (pt) {
+        tCtx.strokeStyle = "#10b981"; // Emerald green
+        tCtx.lineWidth = 4.5;
+        tCtx.beginPath();
+        tCtx.moveTo(pt.leftX, pt.leftY);
+        tCtx.lineTo(pt.rightX, pt.rightY);
+        tCtx.stroke();
 
-      // "DRS" Text on Track
-      tCtx.save();
-      tCtx.translate(pt.x, pt.y);
-      tCtx.rotate(Math.atan2(pt.tangentY, pt.tangentX));
-      tCtx.fillStyle = "#10b981";
-      tCtx.font = "bold 16px Inter, sans-serif";
-      tCtx.textAlign = "center";
-      tCtx.fillText("DRS", 0, -5);
-      tCtx.restore();
+        // "DRS" Text on Track
+        tCtx.save();
+        tCtx.translate(pt.x, pt.y);
+        tCtx.rotate(Math.atan2(pt.tangentY, pt.tangentX));
+        tCtx.fillStyle = "#10b981";
+        tCtx.font = "900 18px Inter, sans-serif";
+        tCtx.textAlign = "center";
+        tCtx.fillText("DRS", 0, -8);
+        tCtx.restore();
+      }
+
+      // DRS Deactivation / End Line
+      const endPt = this.track.getPointAtT ? this.track.getPointAtT(zone.activationEndT) : null;
+      if (endPt) {
+        tCtx.save();
+        tCtx.strokeStyle = "#34d399";
+        tCtx.lineWidth = 3.5;
+        tCtx.setLineDash([12, 8]);
+        tCtx.beginPath();
+        tCtx.moveTo(endPt.leftX, endPt.leftY);
+        tCtx.lineTo(endPt.rightX, endPt.rightY);
+        tCtx.stroke();
+        tCtx.setLineDash([]);
+
+        // "DRS END" Text on Track
+        tCtx.translate(endPt.x, endPt.y);
+        tCtx.rotate(Math.atan2(endPt.tangentY, endPt.tangentX));
+        tCtx.fillStyle = "#34d399";
+        tCtx.font = "bold 13px Inter, sans-serif";
+        tCtx.textAlign = "center";
+        tCtx.fillText("DRS END", 0, -6);
+        tCtx.restore();
+      }
     });
 
     // Sector 1 Split Line
-    const sectors = this.track.sectors || { s1End: 0.30, s2End: 0.78 };
-    const s1Idx = Math.floor(n * sectors.s1End) % n;
-    const s1Pt = pts[s1Idx];
+    const sectors = this.track.sectors || { s1End: 0.44, s2End: 0.78 };
+    const s1Pt = this.track.getPointAtT ? this.track.getPointAtT(sectors.s1End) : null;
     if (s1Pt) {
-      tCtx.strokeStyle = "#ec4899"; // Purple sector line
-      tCtx.lineWidth = 3.5;
+      tCtx.strokeStyle = "#ec4899"; // Magenta sector line
+      tCtx.lineWidth = 4;
       tCtx.beginPath();
       tCtx.moveTo(s1Pt.leftX, s1Pt.leftY);
       tCtx.lineTo(s1Pt.rightX, s1Pt.rightY);
       tCtx.stroke();
+
+      // Sector 2 Entry Marker
+      tCtx.save();
+      tCtx.translate(s1Pt.x, s1Pt.y);
+      tCtx.rotate(Math.atan2(s1Pt.tangentY, s1Pt.tangentX));
+      tCtx.fillStyle = "#ec4899";
+      tCtx.font = "bold 14px Inter, sans-serif";
+      tCtx.textAlign = "center";
+      tCtx.fillText("SECTOR 2", 0, -6);
+      tCtx.restore();
     }
 
     // Sector 2 Split Line
-    const s2Idx = Math.floor(n * sectors.s2End) % n;
-    const s2Pt = pts[s2Idx];
+    const s2Pt = this.track.getPointAtT ? this.track.getPointAtT(sectors.s2End) : null;
     if (s2Pt) {
       tCtx.strokeStyle = "#ec4899";
-      tCtx.lineWidth = 3.5;
+      tCtx.lineWidth = 4;
       tCtx.beginPath();
       tCtx.moveTo(s2Pt.leftX, s2Pt.leftY);
       tCtx.lineTo(s2Pt.rightX, s2Pt.rightY);
       tCtx.stroke();
+
+      // Sector 3 Entry Marker
+      tCtx.save();
+      tCtx.translate(s2Pt.x, s2Pt.y);
+      tCtx.rotate(Math.atan2(s2Pt.tangentY, s2Pt.tangentX));
+      tCtx.fillStyle = "#ec4899";
+      tCtx.font = "bold 14px Inter, sans-serif";
+      tCtx.textAlign = "center";
+      tCtx.fillText("SECTOR 3", 0, -6);
+      tCtx.restore();
     }
 
     // Distance Brake Marker Boards (150m, 100m, 50m)
@@ -476,7 +515,7 @@ export class TrackRenderer {
   /**
    * Main rendering pass
    */
-  render(playerCar) {
+  render(playerCar, remotePlayers = []) {
     const ctx = this.ctx;
     const w = this.width;
     const h = this.height;
@@ -527,20 +566,72 @@ export class TrackRenderer {
     // 6. Record and Render Skidmarks for current frame
     this.addSkidmark(playerCar);
 
-    // 7. Render Player Car
+    // 7. Render Remote Ghost Cars with Nametags (no physical collision)
+    for (let i = 0; i < remotePlayers.length; i++) {
+      const rp = remotePlayers[i];
+      if (rp && rp.car) {
+        rp.car.draw(ctx);
+        this.drawRemoteCarNametag(ctx, rp);
+      }
+    }
+
+    // 8. Render Player Car
     playerCar.draw(ctx);
 
     // Restore Camera Transform
     ctx.restore();
 
-    // 8. Render Telemetry Mini-Map Overlay in HUD
-    this.renderMiniMap(playerCar);
+    // 9. Render Telemetry Mini-Map Overlay in HUD
+    this.renderMiniMap(playerCar, remotePlayers);
+  }
+
+  /**
+   * Draw floating nametag above remote car that stays upright regardless of camera rotation
+   */
+  drawRemoteCarNametag(ctx, rp) {
+    if (!rp || !rp.car) return;
+    ctx.save();
+    ctx.translate(rp.car.x, rp.car.y - 38);
+    // Counter-rotate to remain readable
+    ctx.rotate(-this.camAngle);
+
+    const name = rp.name || "Driver";
+    const teamColor = rp.car.team ? rp.car.team.primaryColor : "#e10600";
+    const accentColor = rp.car.team ? rp.car.team.accentColor : "#ffffff";
+
+    ctx.font = "bold 11px Outfit, sans-serif";
+    const textWidth = ctx.measureText(name).width;
+    const pillWidth = Math.max(54, textWidth + 24);
+    const pillHeight = 20;
+
+    // Glass pill background
+    ctx.fillStyle = "rgba(10, 14, 22, 0.88)";
+    ctx.strokeStyle = accentColor;
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.roundRect(-pillWidth / 2, -pillHeight / 2, pillWidth, pillHeight, 10);
+    ctx.fill();
+    ctx.stroke();
+
+    // Team indicator dot
+    ctx.fillStyle = teamColor;
+    ctx.beginPath();
+    ctx.arc(-pillWidth / 2 + 9, 0, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Driver name text
+    ctx.fillStyle = "#ffffff";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(name, 5, 0.5);
+
+    ctx.restore();
   }
 
   /**
    * Render real-time mini-map in bottom-right corner
    */
-  renderMiniMap(playerCar) {
+  renderMiniMap(playerCar, remotePlayers = []) {
     const ctx = this.ctx;
     const mapW = 210;
     const mapH = 150;
@@ -593,6 +684,18 @@ export class TrackRenderer {
     const startPos = worldToMap(pts[0].x, pts[0].y);
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(startPos.x - 2, startPos.y - 2, 4, 4);
+
+    // Draw Remote Cars dots on mini-map
+    for (let i = 0; i < remotePlayers.length; i++) {
+      const rp = remotePlayers[i];
+      if (rp && rp.car) {
+        const rPos = worldToMap(rp.car.x, rp.car.y);
+        ctx.fillStyle = rp.car.team ? rp.car.team.accentColor : "#cbd5e1";
+        ctx.beginPath();
+        ctx.arc(rPos.x, rPos.y, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
 
     // Draw Player Car dot with pulse aura
     const pPos = worldToMap(playerCar.x, playerCar.y);
