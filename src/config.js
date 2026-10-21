@@ -7,7 +7,7 @@ export const F1_CONFIG = {
   // Production PartyKit WebSocket server host
   // Once deployed via `npx partykit deploy`, replace this with your project URL,
   // e.g., "f1-2d-server.<your-username>.partykit.dev"
-  PARTYKIT_HOST: window.PARTYKIT_HOST || "f1-2d-server.fehmikartal.partykit.dev",
+  PARTYKIT_HOST: window.PARTYKIT_HOST || "f1-2d-server.fehmikartal.workers.dev",
 
   // Local development port
   DEV_PORT: 1999,
