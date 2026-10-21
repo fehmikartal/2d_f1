@@ -1,13 +1,16 @@
 /**
- * PartyKit Real-time Game Server for 2D Formula 1
+ * PartyServer Real-time Game Server for 2D Formula 1
+ * Runs natively on Cloudflare Workers & Cloudflare Durable Objects.
  * Handles drop-in/drop-out rooms, tracks (Spa vs Istanbul Park),
  * real-time car transform relay, and persistent track record database.
  * 
  * Persistent Storage:
- * Uses Cloudflare Durable Objects transactional storage (this.room.storage)
+ * Uses Cloudflare Durable Objects transactional storage (this.ctx.storage)
  * in the dedicated 'records' room so fastest times per track persist across
  * room closures, client disconnects, and server restarts.
  */
+
+import { Server } from "partyserver";
 
 function formatLapTime(seconds) {
   if (!seconds || isNaN(seconds)) return "--:--.---";
@@ -16,14 +19,31 @@ function formatLapTime(seconds) {
   return `${m}:${s.padStart(6, "0")}`;
 }
 
-export default class F1RoomServer {
-  constructor(room) {
-    this.room = room;
+export class F1RoomServer extends Server {
+  constructor(ctx, env) {
+    super(ctx, env);
     this.track = null;
     this.hostId = null;
     this.players = new Map();
     this.leaderboard = [];
     this.cachedTrackRecord = null;
+  }
+
+  get roomId() {
+    return this.name || this.room?.id || "default";
+  }
+
+  get storage() {
+    return this.ctx?.storage || this.room?.storage;
+  }
+
+  broadcastMessage(msg, without = []) {
+    const payload = typeof msg === "string" ? msg : JSON.stringify(msg);
+    if (typeof this.broadcast === "function") {
+      this.broadcast(payload, without);
+    } else if (this.room && typeof this.room.broadcast === "function") {
+      this.room.broadcast(payload, without);
+    }
   }
 
   // ==========================================
@@ -33,17 +53,17 @@ export default class F1RoomServer {
   async getTrackRecords(trackId = "spa") {
     const tid = trackId === "istanbul" ? "istanbul" : "spa";
     const key = `f1_track_records_${tid}`;
-    let records = await this.room.storage.get(key);
+    let records = await this.storage.get(key);
 
     if (!records || !Array.isArray(records)) {
       records = [];
-      await this.room.storage.put(key, records);
+      await this.storage.put(key, records);
     } else {
       // Purge any legacy placeholder seed records (e.g. Verstappen, Alonso seed_*)
       const realRecords = records.filter(r => !r.id || !r.id.startsWith("seed_"));
       if (realRecords.length !== records.length) {
         records = realRecords;
-        await this.room.storage.put(key, records);
+        await this.storage.put(key, records);
       }
     }
 
@@ -103,7 +123,7 @@ export default class F1RoomServer {
     const rank = trimmed.findIndex(r => r.id === normalized.id) + 1;
 
     // Persist to Cloudflare Durable Storage
-    await this.room.storage.put(`f1_track_records_${tid}`, trimmed);
+    await this.storage.put(`f1_track_records_${tid}`, trimmed);
 
     return {
       success: true,
@@ -117,7 +137,7 @@ export default class F1RoomServer {
 
   async clearTrackRecords(trackId) {
     const tid = trackId === "istanbul" ? "istanbul" : "spa";
-    await this.room.storage.put(`f1_track_records_${tid}`, []);
+    await this.storage.put(`f1_track_records_${tid}`, []);
     return [];
   }
 
@@ -142,11 +162,11 @@ export default class F1RoomServer {
 
     // Internal health ping
     if (url.pathname.endsWith("/test-ping")) {
-      return new Response(JSON.stringify({ pong: true, roomId: this.room.id }), { headers: corsHeaders });
+      return new Response(JSON.stringify({ pong: true, roomId: this.roomId }), { headers: corsHeaders });
     }
 
     // Direct database queries to room "records" OR forwarded requests
-    if (this.room.id === "records" || url.pathname.includes("/records")) {
+    if (this.roomId === "records" || url.pathname.includes("/records")) {
       try {
         if (req.method === "GET") {
           const records = await this.getTrackRecords(track);
@@ -201,11 +221,57 @@ export default class F1RoomServer {
 
     // Default room info response
     return new Response(JSON.stringify({
-      roomId: this.room.id,
+      roomId: this.roomId,
       track: this.track,
       playerCount: this.players.size,
       leaderboardCount: this.leaderboard.length
     }), { headers: corsHeaders });
+  }
+
+  // ==========================================
+  // CROSS-ROOM DATABASE FETCH HELPERS
+  // ==========================================
+
+  async fetchRecordsFromDb(track) {
+    try {
+      if (this.env && this.env.Main) {
+        const recordsStub = this.env.Main.get(this.env.Main.idFromName("records"));
+        const res = await recordsStub.fetch(new Request(`https://partyserver/parties/main/records?track=${track}`));
+        if (res.ok) return await res.json();
+      } else if (this.room?.context?.parties?.main) {
+        const recordsRoom = this.room.context.parties.main.get("records");
+        const res = await recordsRoom.fetch(`/records?track=${track}`);
+        if (res.ok) return await res.json();
+      }
+    } catch (err) {
+      console.warn("[F1RoomServer] Failed to query persistent records room on connect:", err);
+    }
+    return null;
+  }
+
+  async postLapToDb(payload) {
+    try {
+      if (this.env && this.env.Main) {
+        const recordsStub = this.env.Main.get(this.env.Main.idFromName("records"));
+        const res = await recordsStub.fetch(new Request("https://partyserver/parties/main/records", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        }));
+        if (res.ok) return await res.json();
+      } else if (this.room?.context?.parties?.main) {
+        const recordsRoom = this.room.context.parties.main.get("records");
+        const res = await recordsRoom.fetch("/records", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        if (res.ok) return await res.json();
+      }
+    } catch (err) {
+      console.warn("[F1RoomServer] Error forwarding lap to database room:", err);
+    }
+    return null;
   }
 
   // ==========================================
@@ -223,22 +289,22 @@ export default class F1RoomServer {
     if (action === "join") {
       const roomExists = !!this.track && this.players.size > 0;
       if (!roomExists) {
-        console.warn(`[F1RoomServer] Rejected join to non-existing or empty room: ${this.room.id} (track=${this.track}, activePlayers=${this.players.size})`);
+        console.warn(`[F1RoomServer] Rejected join to non-existing or empty room: ${this.roomId} (track=${this.track}, activePlayers=${this.players.size})`);
         conn.send(JSON.stringify({
           type: "room:error",
           code: "ROOM_NOT_FOUND",
-          message: `Room "${this.room.id}" does not exist. Please check the room code or create a new room.`
+          message: `Room "${this.roomId}" does not exist. Please check the room code or create a new room.`
         }));
         conn.close(4404, "Room not found");
         return;
       }
 
       if (this.players.size >= 10) {
-        console.warn(`[F1RoomServer] Rejected join to full room: ${this.room.id}`);
+        console.warn(`[F1RoomServer] Rejected join to full room: ${this.roomId}`);
         conn.send(JSON.stringify({
           type: "room:error",
           code: "ROOM_FULL",
-          message: `Room "${this.room.id}" is full (maximum 10 players).`
+          message: `Room "${this.roomId}" is full (maximum 10 players).`
         }));
         conn.close(4403, "Room full");
         return;
@@ -274,17 +340,11 @@ export default class F1RoomServer {
     // Fetch persistent all-time records from central database room
     let dbRecords = null;
     let allTimeBest = null;
-    try {
-      const recordsRoom = this.room.context.parties.main.get("records");
-      const res = await recordsRoom.fetch(`/records?track=${this.track}`);
-      if (res.ok) {
-        const data = await res.json();
-        dbRecords = data.records;
-        allTimeBest = data.allTimeBest;
-        this.cachedTrackRecord = allTimeBest;
-      }
-    } catch (err) {
-      console.warn("[F1RoomServer] Failed to query persistent records room on connect:", err);
+    const dbData = await this.fetchRecordsFromDb(this.track);
+    if (dbData) {
+      dbRecords = dbData.records;
+      allTimeBest = dbData.allTimeBest;
+      this.cachedTrackRecord = allTimeBest;
     }
 
     // Synchronize room state, current players, and persistent track records with newcomer
@@ -300,15 +360,17 @@ export default class F1RoomServer {
     }));
 
     // Broadcast newcomer to everyone else in the room
-    this.room.broadcast(JSON.stringify({
+    this.broadcastMessage(JSON.stringify({
       type: "player:joined",
       player
     }), [conn.id]);
   }
 
-  async onMessage(message, sender) {
+  async onMessage(arg1, arg2) {
     try {
-      const data = typeof message === "string" ? JSON.parse(message) : message;
+      const sender = typeof arg1 === "object" && arg1 && "id" in arg1 ? arg1 : arg2;
+      const rawMessage = sender === arg1 ? arg2 : arg1;
+      const data = typeof rawMessage === "string" ? JSON.parse(rawMessage) : rawMessage;
 
       if (data.type === "ping") {
         sender.send(JSON.stringify({ type: "pong" }));
@@ -328,7 +390,7 @@ export default class F1RoomServer {
           player.braking = !!data.braking;
         }
         // Broadcast car updates with authenticated sender id to other peers
-        this.room.broadcast(JSON.stringify(data), [sender.id]);
+        this.broadcastMessage(JSON.stringify(data), [sender.id]);
       } else if (data.type === "lap:completed") {
         const player = this.players.get(sender.id);
         if (player && typeof data.lapTime === "number" && data.lapTime > 15000) {
@@ -344,7 +406,7 @@ export default class F1RoomServer {
             this.updateLeaderboard(player);
 
             // Broadcast updated live session leaderboard to all players in the room
-            this.room.broadcast(JSON.stringify({
+            this.broadcastMessage(JSON.stringify({
               type: "leaderboard:update",
               leaderboard: this.leaderboard
             }));
@@ -356,7 +418,7 @@ export default class F1RoomServer {
           }
         }
       } else if (data.type === "room:close" && sender.id === this.hostId) {
-        this.room.broadcast(JSON.stringify({
+        this.broadcastMessage(JSON.stringify({
           type: "room:closed",
           reason: "The host has closed this room."
         }));
@@ -367,55 +429,41 @@ export default class F1RoomServer {
   }
 
   async persistLapToDatabase(player, lapData) {
-    try {
-      const recordsRoom = this.room.context.parties.main.get("records");
-      const seconds = lapData.lapTime / 1000;
-      const s1 = lapData.sector1 ? lapData.sector1 / 1000 : null;
-      const s2 = lapData.sector2 ? lapData.sector2 / 1000 : null;
-      const s3 = lapData.sector3 ? lapData.sector3 / 1000 : null;
+    const seconds = lapData.lapTime / 1000;
+    const s1 = lapData.sector1 ? lapData.sector1 / 1000 : null;
+    const s2 = lapData.sector2 ? lapData.sector2 / 1000 : null;
+    const s3 = lapData.sector3 ? lapData.sector3 / 1000 : null;
 
-      const payload = {
-        track: this.track,
-        record: {
-          driver: player.name,
-          team: player.team,
-          time: seconds,
-          lapTime: lapData.lapTime,
-          formatted: formatLapTime(seconds),
-          s1Time: s1,
-          s2Time: s2,
-          s3Time: s3,
-          s1: s1 ? s1.toFixed(3) : "--.---",
-          s2: s2 ? s2.toFixed(3) : "--.---",
-          s3: s3 ? s3.toFixed(3) : "--.---",
-          topSpeed: player.speedKmh || 0
-        }
-      };
-
-      const res = await recordsRoom.fetch("/records", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-
-      if (res.ok) {
-        const result = await res.json();
-        // If this lap broke the all-time track record, broadcast celebration to the entire room!
-        if (result.isNewRecord) {
-          this.cachedTrackRecord = result.allTimeBest;
-          this.room.broadcast(JSON.stringify({
-            type: "track:record_beaten",
-            track: this.track,
-            driver: player.name,
-            team: player.team,
-            lapTime: lapData.lapTime,
-            formatted: formatLapTime(seconds),
-            allTimeBest: result.allTimeBest
-          }));
-        }
+    const payload = {
+      track: this.track,
+      record: {
+        driver: player.name,
+        team: player.team,
+        time: seconds,
+        lapTime: lapData.lapTime,
+        formatted: formatLapTime(seconds),
+        s1Time: s1,
+        s2Time: s2,
+        s3Time: s3,
+        s1: s1 ? s1.toFixed(3) : "--.---",
+        s2: s2 ? s2.toFixed(3) : "--.---",
+        s3: s3 ? s3.toFixed(3) : "--.---",
+        topSpeed: player.speedKmh || 0
       }
-    } catch (err) {
-      console.warn("[F1RoomServer] Error forwarding lap to database room:", err);
+    };
+
+    const result = await this.postLapToDb(payload);
+    if (result && result.isNewRecord) {
+      this.cachedTrackRecord = result.allTimeBest;
+      this.broadcastMessage(JSON.stringify({
+        type: "track:record_beaten",
+        track: this.track,
+        driver: player.name,
+        team: player.team,
+        lapTime: lapData.lapTime,
+        formatted: formatLapTime(seconds),
+        allTimeBest: result.allTimeBest
+      }));
     }
   }
 
@@ -446,7 +494,7 @@ export default class F1RoomServer {
   onClose(conn) {
     this.players.delete(conn.id);
 
-    this.room.broadcast(JSON.stringify({
+    this.broadcastMessage(JSON.stringify({
       type: "player:left",
       id: conn.id
     }));
@@ -464,7 +512,7 @@ export default class F1RoomServer {
         const newHost = this.players.get(this.hostId);
         if (newHost) newHost.isHost = true;
 
-        this.room.broadcast(JSON.stringify({
+        this.broadcastMessage(JSON.stringify({
           type: "host:changed",
           hostId: this.hostId
         }));
@@ -472,3 +520,5 @@ export default class F1RoomServer {
     }
   }
 }
+
+export default F1RoomServer;

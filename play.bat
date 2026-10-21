@@ -4,8 +4,8 @@ title Formula 1 2D Game Server
 echo ========================================================
 echo        Formula 1 2D Racing - Web Game Server
 echo ========================================================
-echo Starting PartyKit Multiplayer Server on port 1999 ...
-start "PartyKit Multiplayer Server" /min cmd /c "npx partykit dev --port 1999"
+echo Starting Cloudflare Multiplayer Server on port 1999 ...
+start "Cloudflare Multiplayer Server" /min cmd /c "npx wrangler dev --port 1999"
 echo Starting Python web server on http://localhost:8080 ...
 echo Close this window when you are done playing.
 echo.
